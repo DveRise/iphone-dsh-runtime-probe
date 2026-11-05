@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "type": "runtime-probe",
+  "timestamp": "2026-10-31T14:30:09.484Z",
+  "passed": true,
+  "checks": [
+    {
+      "name": "Node >=24.9",
+      "ok": true,
+      "details": {
+        "version": "v24.16.0",
+        "mobile": null,
+        "platform": "win32",
+        "arch": "x64"
+      }
+    },
+    {
+      "name": "ESM entry and import.meta.main",
+      "ok": true,
+      "details": {
+        "main": true
+      }
+    },
+    {
+      "name": "Chinese Intl support",
+      "ok": true,
+      "details": {
+        "locale": "zh-CN"
+      }
+    },
+    {
+      "name": "Read/write in the test app data directory",
+      "ok": true,
+      "details": {
+        "roundtrip": true
+      }
+    },
+    {
+      "name": "Loopback HTTP server and fetch",
+      "ok": true,
+      "details": {
+        "status": 200
+      }
+    },
+    {
+      "name": "Public HTTPS metadata request, no model credentials",
+      "ok": true,
+      "details": {
+        "status": 200,
+        "package": "@deepseek-ai/dsh",
+        "version": "0.2.1-rc.5"
+      }
+    }
+  ],
+  "notTested": [
+    "DeepSeek Harness startup",
+    "model inference",
+    "native addons",
+    "child processes",
+    "background operation",
+    "screen capture and touch injection"
+  ]
+}
