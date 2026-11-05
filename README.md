@@ -2,6 +2,8 @@
 
 这份工程供“只有 Windows、能登录 GitHub”的用户在云端 Mac 编译一个 iPhone 测试 App。目标设备为 iPhone 12 / iOS 16.6.1（20G81）。
 
+2026-11-05：已在用户授权下创建[公开测试仓库](https://github.com/DveRise/iphone-dsh-runtime-probe)，[首次 GitHub Actions 构建](https://github.com/DveRise/iphone-dsh-runtime-probe/actions/runs/42051269447)成功。用户仍只需要 Windows；iOS 编译由 GitHub 托管 Mac 执行。
+
 它是官方 DeepSeek Harness 移植之前的运行环境验证，**尚未包含 dsh，也不是完整手机 Agent**。先确认 Node、ESM、中文处理、文件与网络功能，再处理 dsh 和手机自动化插件。
 
 ## 当前完成情况
@@ -11,7 +13,8 @@
 - 已在 Windows 解析实际二进制：真机 arm64 / iPhoneOS，最低系统 14.0，构建 SDK 26.5；配置上不排除 iOS 16.6.1，但这不证明实机运行成功。
 - 本工程的原生宿主、JS 探测及手动云端构建流程已准备。
 - 已通过本地 Python 语法检查、workflow YAML 解析及手动触发/只读权限检查；同一份 JS 的六项检查在 Windows Node v24.16.0 上全部通过，结果见 verification 目录。
-- **尚未在 macOS 编译、尚未安装或测试真机。** Windows 上通过的 JS 检查不代表 iOS 检查通过。
+- 已通过云端 macOS 编译、ad-hoc 签名校验和构建产物上传；生成 MobileRuntimeProbe.ipa 与 build-report.json。
+- **尚未安装或测试真机。** 编译与 Windows JS 检查通过，不代表 iOS 运行能力检查已经通过。
 
 ## 检查什么
 
@@ -21,9 +24,9 @@
 
 ## 如何从 Windows 使用云端构建
 
-当前仅交付本地工程。没有在用户账号创建仓库、上传代码或启动 GitHub Actions。
+仓库与第一次构建已经完成。后续若需要重新编译，可按以下步骤手动触发；工作流不会因文档提交自动运行。
 
-用户选择并授权使用 GitHub 仓库后：
+在已授权的仓库中：
 
 1. 将本目录的内容放在仓库根目录，保留 `.github/workflows/build-ios.yml`。
 2. 在 GitHub 的 Actions 中选择 **Build iPhone runtime probe**，手动运行。
