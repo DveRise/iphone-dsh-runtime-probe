@@ -25,10 +25,11 @@
     self.logPath = [self.dataDirectory stringByAppendingPathComponent:@"runtime.log"];
 
     UILabel *title = [UILabel new];
-    title.text = @"iPhone 运行环境检查";
+    BOOL harness = [[NSBundle mainBundle] pathForResource:@"dsh-worker" ofType:@"mjs"] != nil;
+    title.text = harness ? @"DeepSeek Harness 启动检查" : @"iPhone 运行环境检查";
     title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle2];
     UILabel *description = [UILabel new];
-    description.text = @"检查手机本机的 Node 24、文件读写及网络能力。此包尚不运行 DeepSeek 任务。请保持页面在前台。";
+    description.text = harness ? @"检查官方 Harness 的启动和本机界面服务。尚不调用模型或操控其他 App。请保持页面在前台。" : @"检查手机本机的 Node 24、文件读写及网络能力。此包尚不运行 DeepSeek 任务。请保持页面在前台。";
     description.numberOfLines = 0;
     description.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
     self.startButton = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -76,6 +77,8 @@
     NSString *script = [NSBundle.mainBundle pathForResource:@"probe" ofType:@"mjs"];
     NSString *directory = self.dataDirectory;
     NSString *logPath = self.logPath;
+    NSString *installRoot = [NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"dsh-runtime"];
+    BOOL harness = [[NSBundle mainBundle] pathForResource:@"dsh-worker" ofType:@"mjs"] != nil;
     __weak ProbeController *weakSelf = self;
     NSThread *thread = [[NSThread alloc] initWithBlock:^{
         @autoreleasepool {
@@ -89,9 +92,15 @@
                 setvbuf(stdout, NULL, _IOLBF, 0);
                 setvbuf(stderr, NULL, _IOLBF, 0);
                 setenv("DSH_HOME", directory.fileSystemRepresentation, 1);
-                char *args[] = {strdup("node"), strdup(script.fileSystemRepresentation), strdup(directory.fileSystemRepresentation)};
-                result = node_start(3, args);
-                for (char *arg : args) free(arg);
+                char *args[5];
+                int count = 0;
+                args[count++] = strdup("node");
+                if (harness) args[count++] = strdup("--expose-internals");
+                args[count++] = strdup(script.fileSystemRepresentation);
+                args[count++] = strdup(directory.fileSystemRepresentation);
+                if (harness) args[count++] = strdup(installRoot.fileSystemRepresentation);
+                result = node_start(count, args);
+                for (int i = 0; i < count; i++) free(args[i]);
                 fprintf(stdout, "Native host: node_start returned %d\n", result);
                 fflush(stdout);
                 fflush(stderr);

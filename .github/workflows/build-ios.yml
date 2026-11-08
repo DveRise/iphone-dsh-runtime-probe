@@ -1,27 +1,25 @@
-name: Build iPhone runtime probe
-
-# Only an explicit manual run starts a macOS job.
+name: Build official dsh startup probe
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
-      - name: Read the test project
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Build the foreground test app
-        run: python3 build_ios.py
-      - name: Upload the test package and build report
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Install locked JavaScript dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --omit=optional --prefix dsh-runtime
+      - name: Build the foreground Harness startup probe
+        run: |
+          python3 patch_runtime.py dsh-runtime
+          python3 build_ios.py --harness-payload dsh-runtime
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: iphone-runtime-probe
+          name: iphone-dsh-startup-probe
           path: |
             dist/MobileRuntimeProbe.ipa
             dist/build-report.json

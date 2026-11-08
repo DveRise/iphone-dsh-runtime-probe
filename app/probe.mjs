@@ -1,83 +1,87 @@
-import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
-import { createServer } from 'node:http';
-import { join } from 'node:path';
+import { Worker } from 'node:worker_threads';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 
-const output = process.argv[2];
-if (!output) throw new Error('An explicit writable output directory is required');
-await mkdir(output, { recursive: true });
-const checks = [];
-async function check(name, operation) {
-  try {
-    const details = await operation();
-    checks.push({ name, ok: true, details });
-    console.log(`PASS ${name}`);
-  } catch (error) {
-    checks.push({ name, ok: false, error: String(error.message ?? error) });
-    console.log(`FAIL ${name}: ${String(error.message ?? error)}`);
-  }
+const [stateArgument, installArgument] = process.argv.slice(2);
+if (!stateArgument || !installArgument) throw new Error('Explicit probe state and dsh installation paths required');
+const state = resolve(stateArgument), installRoot = resolve(installArgument);
+const manifest = JSON.parse(await readFile(join(installRoot, 'node_modules/@deepseek-ai/dsh/package.json'), 'utf8'));
+if (manifest.version !== '0.2.1-rc.5') throw new Error('Unexpected dsh version');
+await mkdir(join(state, 'workspace'), { recursive: true });
+process.chdir(join(state, 'workspace'));
+const env = {};
+for (const [key, value] of Object.entries(process.env)) {
+  if (['path', 'systemroot', 'windir', 'comspec', 'pathext', 'temp', 'tmp'].includes(key.toLowerCase())) env[key] = value;
 }
-
-await check('Node >=24.9', async () => {
-  const [major, minor] = process.versions.node.split('.').map(Number);
-  if (major < 24 || (major === 24 && minor < 9)) throw new Error('runtime is too old');
-  return { version: process.version, mobile: process.versions.mobile ?? null,
-    platform: process.platform, arch: process.arch };
+env.DSH_HOME = join(state, 'dsh-home');
+env.DSH_TELEMETRY_DISABLED = '1';
+const report = { schema: 1, type: 'official-dsh-embedded-startup', dshVersion: manifest.version,
+  nodeVersion: process.version, platform: process.platform, arch: process.arch,
+  modelCalls: 0, passed: false, checks: [], deviceTested: false };
+const redact = value => String(value).replace(/https?:\/\/[^\s"'<>]+/g, '[URL REDACTED]');
+let diagnostics = '', settled = false;
+const worker = new Worker(new URL('./dsh-worker.mjs', import.meta.url), {
+  workerData: { installRoot }, env, stdout: true, stderr: true,
+  execArgv: ['--expose-internals', '--no-addons'],
 });
-await check('ESM entry and import.meta.main', async () => {
-  if (import.meta.main !== true) throw new Error('ESM entry detection unavailable');
-  return { main: true };
-});
-await check('Chinese Intl support', async () => {
-  const supported = Intl.Collator.supportedLocalesOf(['zh-CN']);
-  if (supported.length !== 1) throw new Error('Chinese locale is unavailable');
-  return { locale: new Intl.Collator('zh-CN').resolvedOptions().locale };
-});
-await check('Read/write in the test app data directory', async () => {
-  const file = join(output, 'filesystem-probe.txt');
-  try {
-    await writeFile(file, 'iPhone Harness 环境测试', { flag: 'wx' });
-    const value = await readFile(file, 'utf8');
-    if (value !== 'iPhone Harness 环境测试') throw new Error('file contents differ');
-  } finally {
-    await unlink(file).catch(() => {});
-  }
-  return { roundtrip: true };
-});
-await check('Loopback HTTP server and fetch', async () => {
-  const server = createServer((req, res) => { res.end('runtime-loopback-ok'); });
-  try {
-    await new Promise((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(0, '127.0.0.1', resolve);
-    });
-    const response = await fetch(`http://127.0.0.1:${server.address().port}/`, {
-      signal: AbortSignal.timeout(10000), redirect: 'error',
-    });
-    if (response.status !== 200 || await response.text() !== 'runtime-loopback-ok') {
-      throw new Error('loopback request failed');
-    }
-    return { status: 200 };
-  } finally {
-    server.closeAllConnections();
-    await new Promise(resolve => server.close(resolve));
-  }
-});
-await check('Public HTTPS metadata request, no model credentials', async () => {
-  const response = await fetch('https://registry.npmjs.org/@deepseek-ai/dsh/0.2.1-rc.5', {
-    signal: AbortSignal.timeout(15000), redirect: 'error',
+worker.stdout.on('data', chunk => { diagnostics = (diagnostics + chunk).slice(-16000); });
+worker.stderr.on('data', chunk => { diagnostics = (diagnostics + chunk).slice(-16000); });
+const exited = new Promise(resolveExit => worker.once('exit', code => {
+  report.workerExitCode = code;
+  resolveExit();
+}));
+let timeout;
+await new Promise(resolveDone => {
+  const finish = async () => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timeout);
+    await worker.terminate();
+    resolveDone();
+  };
+  timeout = setTimeout(() => { report.error = 'Startup or cleanup deadline exceeded'; void finish(); }, 60000);
+  worker.once('error', error => { report.error = redact(error.message); void finish(); });
+  worker.once('exit', () => {
+    if (!settled) { report.error = 'Worker exited before completing checks'; void finish(); }
   });
-  if (!response.ok) throw new Error(`HTTPS response ${response.status}`);
-  const value = await response.json();
-  if (value.name !== '@deepseek-ai/dsh' || value.version !== '0.2.1-rc.5') {
-    throw new Error('unexpected metadata');
-  }
-  return { status: response.status, package: value.name, version: value.version };
+  worker.on('message', async message => {
+    if (settled) return;
+    if (message.type === 'ready') {
+      try {
+        const origin = new URL(message.origin);
+        const launch = new URL(message.launch);
+        if (origin.hostname !== '127.0.0.1' || launch.origin !== origin.origin) throw new Error('Unexpected listener or launch origin');
+        report.checks.push({ name: 'Official profile boots in worker', ok: true });
+        const denied = await fetch(origin, { redirect: 'manual', signal: AbortSignal.timeout(5000) });
+        await denied.arrayBuffer();
+        report.checks.push({ name: 'Unauthenticated access denied', ok: denied.status === 401, status: denied.status });
+        const exchange = await fetch(launch, { redirect: 'manual', signal: AbortSignal.timeout(5000) });
+        const cookie = exchange.headers.get('set-cookie')?.split(';')[0];
+        const location = exchange.headers.get('location');
+        await exchange.arrayBuffer();
+        const target = new URL(location ?? '/', origin);
+        if (![302, 303].includes(exchange.status) || !cookie || target.origin !== origin.origin) throw new Error(`Authentication exchange rejected (HTTP ${exchange.status})`);
+        report.checks.push({ name: 'Launch-token cookie exchange', ok: true, status: exchange.status });
+        const response = await fetch(target, { headers: { cookie }, redirect: 'manual', signal: AbortSignal.timeout(5000) });
+        const html = await response.text();
+        report.checks.push({ name: 'Authenticated official frontend', ok: response.status === 200 && /<!doctype html|<html/i.test(html), status: response.status });
+        worker.postMessage({ type: 'stop' });
+      } catch (error) { report.error = redact(error.message); await finish(); }
+    } else if (message.type === 'disposed') {
+      report.checks.push({ name: 'Official context disposed without exiting host', ok: true });
+      report.passed = report.checks.length === 5 && report.checks.every(check => check.ok);
+      await finish();
+    } else if (message.type.endsWith('error')) {
+      report.error = redact(message.message);
+      if (message.failures) report.failures = JSON.parse(redact(JSON.stringify(message.failures)));
+      await finish();
+    }
+  });
 });
-
-const report = { schema: 1, type: 'runtime-probe', timestamp: new Date().toISOString(),
-  passed: checks.every(check => check.ok), checks,
-  notTested: ['DeepSeek Harness startup', 'model inference', 'native addons',
-    'child processes', 'background operation', 'screen capture and touch injection'] };
-await writeFile(join(output, 'runtime-report.json'), JSON.stringify(report, null, 2));
-console.log(`Runtime probe finished: ${report.passed ? 'PASS' : 'FAIL'}`);
-// Return naturally to node_start; never call process.exit() in the UIKit process.
+await exited;
+report.diagnostics = redact(diagnostics);
+await writeFile(join(state, 'runtime-report.json'), JSON.stringify(report, null, 2), { mode: 0o600 });
+console.log(JSON.stringify({ passed: report.passed, checks: report.checks, error: report.error, failures: report.failures }));
+console.log(`Official Harness startup probe finished: ${report.passed ? 'PASS' : 'FAIL'}`);
+// Return naturally: this entry is also intended for a future NodeMobile host.
+process.exitCode = report.passed ? 0 : 1;
