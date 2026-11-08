@@ -42,6 +42,7 @@ def build(archive=None, harness_payload=None):
         framework = app / 'Frameworks' / 'NodeMobile.framework'
         extract_device_framework(archive, framework)
         shutil.copyfile(ROOT / 'app' / 'interactive.mjs', app / 'interactive.mjs')
+        shutil.copyfile(ROOT / 'app' / 'web-compat.js', app / 'web-compat.js')
         excluded_native_assets = []
         if harness_payload is not None:
             harness_payload = Path(harness_payload).resolve()
@@ -78,7 +79,7 @@ def build(archive=None, harness_payload=None):
             'NSLocalNetworkUsageDescription': '验证本机运行环境的网络接口。',
         }
         if harness_payload is not None:
-            info.update(CFBundleDisplayName='DeepSeek助手', CFBundleShortVersionString='0.3.0', CFBundleVersion='3',
+            info.update(CFBundleDisplayName='DeepSeek助手', CFBundleShortVersionString='0.3.1', CFBundleVersion='4',
                         NSAppTransportSecurity={'NSAllowsLocalNetworking': True})
         with (app / 'Info.plist').open('wb') as target:
             plistlib.dump(info, target)
@@ -101,6 +102,7 @@ def build(archive=None, harness_payload=None):
                   'apple_developer_signed': False, 'device_tested': False,
                   'deepseek_harness_bundled': harness_payload is not None,
                   'interactive_webview_bundled': True,
+                  'webkit_compatibility': ['AbortSignal.any when absent'],
                   'background_execution_supported': False,
                   'native_handoff': 'nonce-authenticated-loopback-socket; no token files',
                   'excluded_desktop_native_assets': excluded_native_assets,

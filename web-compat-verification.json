@@ -1,0 +1,13 @@
+{
+  "passed": true,
+  "nodeVersion": "v24.16.0",
+  "checks": [
+    "Preserve existing native implementation",
+    "Install once on a runtime missing the API; empty iterable remains active",
+    "First cancellation wins, preserves falsy reason, handles duplicate signals",
+    "Already-aborted ordering and native signal brand/input validation",
+    "Nested combined signals propagate cancellation",
+    "Directory-picker-shaped asynchronous request cancellation"
+  ],
+  "actualIOSWebViewTested": false
+}

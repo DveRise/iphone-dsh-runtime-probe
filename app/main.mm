@@ -54,6 +54,15 @@
     header.axis = UILayoutConstraintAxisVertical; header.spacing = 6;
     WKWebViewConfiguration *config = [WKWebViewConfiguration new];
     config.websiteDataStore = [WKWebsiteDataStore nonPersistentDataStore];
+    NSString *compatPath = [NSBundle.mainBundle pathForResource:@"web-compat" ofType:@"js"];
+    NSString *compat = compatPath ? [NSString stringWithContentsOfFile:compatPath encoding:NSUTF8StringEncoding error:nil] : nil;
+    if (compat) {
+        [config.userContentController addUserScript:[[WKUserScript alloc] initWithSource:compat
+            injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
+    } else {
+        self.startButton.enabled = NO;
+        self.status.text = @"界面兼容组件缺失，请重新安装。";
+    }
     self.web = [[WKWebView alloc] initWithFrame:CGRectZero configuration:config];
     self.web.navigationDelegate = self;
     header.translatesAutoresizingMaskIntoConstraints = NO; self.web.translatesAutoresizingMaskIntoConstraints = NO;
