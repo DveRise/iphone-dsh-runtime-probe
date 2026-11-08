@@ -85,7 +85,7 @@ def build(archive=None, harness_payload=None):
         run('xcrun', '--sdk', 'iphoneos', 'clang++', '-target', 'arm64-apple-ios16.0',
             '-isysroot', sdk, '-fobjc-arc', '-fmodules', '-std=c++17', '-O2',
             ROOT / 'app' / 'main.mm', '-F', app / 'Frameworks',
-            '-framework', 'UIKit', '-framework', 'Foundation', '-framework', 'WebKit', '-framework', 'NodeMobile',
+            '-framework', 'UIKit', '-framework', 'Foundation', '-framework', 'CoreGraphics', '-framework', 'WebKit', '-framework', 'NodeMobile',
             '-Wl,-rpath,@executable_path/Frameworks', '-o', app / 'MobileRuntimeProbe')
         run('codesign', '--force', '--sign', '-', framework)
         run('codesign', '--force', '--sign', '-', app)
