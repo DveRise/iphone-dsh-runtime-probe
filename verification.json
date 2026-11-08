@@ -1,0 +1,31 @@
+{
+  "platform": "win32",
+  "nodeVersion": "v24.16.0",
+  "modelRequestsIssuedByTest": 0,
+  "results": [
+    {
+      "mode": "persistent-stop",
+      "passed": true,
+      "frontendStatus": 200,
+      "unauthenticatedStatus": 401,
+      "persistent": true,
+      "diagnosticsContainSecrets": false
+    },
+    {
+      "mode": "invalid-nonce",
+      "passed": true,
+      "frontendStatus": 200,
+      "unauthenticatedStatus": 401,
+      "persistent": true,
+      "diagnosticsContainSecrets": false
+    },
+    {
+      "mode": "bridge-disconnect",
+      "passed": true,
+      "frontendStatus": 200,
+      "unauthenticatedStatus": 401,
+      "persistent": true,
+      "diagnosticsContainSecrets": false
+    }
+  ]
+}

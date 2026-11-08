@@ -19,6 +19,8 @@ def run(*args):
 
 
 def build(archive=None, harness_payload=None):
+    if harness_payload is None:
+        raise ValueError('The interactive app requires an explicit Harness payload')
     if sys.platform != 'darwin':
         raise RuntimeError('Compilation requires macOS/Xcode; use the prepared GitHub Actions workflow from Windows')
     sdk = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip()
@@ -39,7 +41,7 @@ def build(archive=None, harness_payload=None):
         app = scratch / 'Payload' / 'MobileRuntimeProbe.app'
         framework = app / 'Frameworks' / 'NodeMobile.framework'
         extract_device_framework(archive, framework)
-        shutil.copyfile(ROOT / 'app' / 'probe.mjs', app / 'probe.mjs')
+        shutil.copyfile(ROOT / 'app' / 'interactive.mjs', app / 'interactive.mjs')
         excluded_native_assets = []
         if harness_payload is not None:
             harness_payload = Path(harness_payload).resolve()
@@ -76,13 +78,14 @@ def build(archive=None, harness_payload=None):
             'NSLocalNetworkUsageDescription': '验证本机运行环境的网络接口。',
         }
         if harness_payload is not None:
-            info.update(CFBundleDisplayName='DSH启动检查', CFBundleShortVersionString='0.2.0', CFBundleVersion='2')
+            info.update(CFBundleDisplayName='DeepSeek助手', CFBundleShortVersionString='0.3.0', CFBundleVersion='3',
+                        NSAppTransportSecurity={'NSAllowsLocalNetworking': True})
         with (app / 'Info.plist').open('wb') as target:
             plistlib.dump(info, target)
         run('xcrun', '--sdk', 'iphoneos', 'clang++', '-target', 'arm64-apple-ios16.0',
             '-isysroot', sdk, '-fobjc-arc', '-fmodules', '-std=c++17', '-O2',
             ROOT / 'app' / 'main.mm', '-F', app / 'Frameworks',
-            '-framework', 'UIKit', '-framework', 'Foundation', '-framework', 'NodeMobile',
+            '-framework', 'UIKit', '-framework', 'Foundation', '-framework', 'WebKit', '-framework', 'NodeMobile',
             '-Wl,-rpath,@executable_path/Frameworks', '-o', app / 'MobileRuntimeProbe')
         run('codesign', '--force', '--sign', '-', framework)
         run('codesign', '--force', '--sign', '-', app)
@@ -97,6 +100,9 @@ def build(archive=None, harness_payload=None):
                   'xcode': subprocess.check_output(['xcodebuild', '-version'], text=True).strip(),
                   'apple_developer_signed': False, 'device_tested': False,
                   'deepseek_harness_bundled': harness_payload is not None,
+                  'interactive_webview_bundled': True,
+                  'background_execution_supported': False,
+                  'native_handoff': 'nonce-authenticated-loopback-socket; no token files',
                   'excluded_desktop_native_assets': excluded_native_assets,
                   'artifact': output.name}
         (dist / 'build-report.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
