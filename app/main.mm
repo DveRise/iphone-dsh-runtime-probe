@@ -2,13 +2,32 @@
 #import <WebKit/WebKit.h>
 #import <NodeMobile/NodeMobile.h>
 #include <sys/socket.h>
+#include "session-lock.h"
 #include <netinet/in.h>
+#include <limits.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+static BOOL sendLine(int socket, NSDictionary *message) {
+    NSData *json = [NSJSONSerialization dataWithJSONObject:message options:0 error:nil];
+    if (!json) return NO;
+    NSMutableData *line = [json mutableCopy];
+    [line appendBytes:"\n" length:1];
+    const char *bytes = (const char *)line.bytes;
+    size_t remaining = line.length;
+    while (remaining > 0) {
+        ssize_t count = send(socket, bytes, remaining, 0);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) return NO;
+        bytes += count;
+        remaining -= (size_t)count;
+    }
+    return YES;
+}
 
 @interface HarnessController : UIViewController <WKNavigationDelegate>
 @property(nonatomic,strong) WKWebView *web;
@@ -103,6 +122,20 @@
     }
 }
 
+// Node's Worker and this host share descriptors in the same process.
+// Only lock an already open regular file; the Worker owns and closes it.
+- (BOOL)replyToFileLock:(NSDictionary *)message socket:(int)socket nonce:(NSString *)nonce {
+    NSNumber *request = message[@"id"], *descriptor = message[@"fd"];
+    if (![request isKindOfClass:NSNumber.class] || ![descriptor isKindOfClass:NSNumber.class]) return NO;
+    long long value = descriptor.longLongValue;
+    if (value < 3 || value > INT_MAX || descriptor.doubleValue != (double)value) return NO;
+    int status = trySessionLock((int)value);
+    @synchronized(self) {
+        return self.client == socket && sendLine(socket,
+            @{@"type":@"flock-result", @"id":request, @"errno":@(status), @"nonce":nonce});
+    }
+}
+
 // A private loopback connection carries the launch URL; no token enters a file.
 - (void)readBridge:(int)listener nonce:(NSString *)nonce {
     NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:100];
@@ -112,7 +145,9 @@
         if (select(listener+1,&set,NULL,NULL,&wait) <= 0) continue;
         int fd = accept(listener,NULL,NULL);
         if (fd < 0) continue;
-        struct timeval timeout = {1,0}; setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+        struct timeval timeout = {1,0};
+        setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+        setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout));
         int yes = 1; setsockopt(fd,SOL_SOCKET,SO_NOSIGPIPE,&yes,sizeof(yes));
         NSMutableData *pending = [NSMutableData data]; BOOL trusted = NO;
         while (!self.stopping) {
@@ -134,7 +169,11 @@
                 id message = [NSJSONSerialization JSONObjectWithData:line options:0 error:nil];
                 if (![message isKindOfClass:NSDictionary.class] || ![message[@"nonce"] isEqual:nonce]) { invalid = YES; break; }
                 if (!trusted) { trusted = YES; @synchronized(self) { self.client = fd; } }
-                dispatch_async(dispatch_get_main_queue(), ^{ [self handleMessage:message]; });
+                if ([message[@"type"] isEqual:@"flock"]) {
+                    if (![self replyToFileLock:message socket:fd nonce:nonce]) { invalid = YES; break; }
+                } else {
+                    dispatch_async(dispatch_get_main_queue(), ^{ [self handleMessage:message]; });
+                }
             }
             if (invalid) break;
         }
@@ -194,9 +233,7 @@
     self.origin = nil; [self.web stopLoading]; self.web.hidden = YES;
     @synchronized(self) {
         if (self.client >= 0) {
-            NSData *data = [NSJSONSerialization dataWithJSONObject:@{@"type":@"stop",@"nonce":self.nonce} options:0 error:nil];
-            NSMutableData *line = [data mutableCopy]; [line appendBytes:"\n" length:1];
-            send(self.client,line.bytes,line.length,0);
+            if (!sendLine(self.client, @{@"type":@"stop", @"nonce":self.nonce})) self.stopping = YES;
         } else { self.stopping = YES; }
     }
 }

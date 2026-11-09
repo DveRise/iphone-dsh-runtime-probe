@@ -5,6 +5,7 @@ import { resolve, join } from 'node:path';
 
 const [stateArg, installArg, portArg, nonce] = process.argv.slice(2);
 const port = Number(portArg);
+const nativeFlock = process.platform === 'ios';
 if (!stateArg || !installArg || !Number.isInteger(port) || port < 1 || port > 65535 || !/^[a-zA-Z0-9-]{32,64}$/.test(nonce ?? '')) throw new Error('Invalid native host arguments');
 const state = resolve(stateArg), installRoot = resolve(installArg);
 const manifest = JSON.parse(await readFile(join(installRoot, 'node_modules/@deepseek-ai/dsh/package.json'), 'utf8'));
@@ -23,6 +24,7 @@ const report = { schema: 1, type: 'interactive-harness', dshVersion: manifest.ve
   crossAppControlAvailable: false, checks: [] };
 const send = message => { if (!bridge.destroyed) bridge.write(JSON.stringify({ ...message, nonce }) + '\n'); };
 const save = () => writeFile(join(state, 'runtime-report.json'), JSON.stringify(report, null, 2), { mode: 0o600 });
+const pendingLocks = new Set();
 let worker, closing = false, ready = false, buffer = '', timer;
 let resolveDone;
 const done = new Promise(resolve => { resolveDone = resolve; });
@@ -61,15 +63,22 @@ bridge.on('data', chunk => {
     buffer = buffer.slice(cut + 1);
     try {
       const message = JSON.parse(line);
-      if (message.nonce !== nonce || message.type !== 'stop') throw new Error();
-      requestStop();
+      if (message.nonce !== nonce) throw new Error();
+      if (message.type === 'stop') {
+        requestStop();
+      } else if (message.type === 'flock-result' && Number.isInteger(message.errno)
+          && message.errno >= 0 && message.errno <= 4095 && pendingLocks.delete(message.id)) {
+        worker.postMessage({ type: 'flock-result', id: message.id, errno: message.errno });
+      } else {
+        throw new Error();
+      }
     } catch { void finish('invalid-native-message'); }
   }
 });
 bridge.once('connect', () => {
   send({ type: 'starting' });
   worker = new Worker(new URL('./dsh-worker.mjs', import.meta.url), {
-    workerData: { installRoot }, env, stdout: true, stderr: true,
+    workerData: { installRoot, state, nativeFlock }, env, stdout: true, stderr: true,
     execArgv: ['--expose-internals', '--no-addons'],
   });
   // Raw upstream errors may contain settings. Do not forward them to export logs.
@@ -79,7 +88,16 @@ bridge.once('connect', () => {
   timer = setTimeout(() => { void finish('startup-timeout'); }, 90000);
   worker.on('message', async message => {
     if (closing) return;
-    if (message.type === 'ready') {
+    if (message.type === 'flock') {
+      if (!nativeFlock || !Number.isSafeInteger(message.id) || message.id < 1
+          || pendingLocks.has(message.id) || pendingLocks.size >= 64
+          || !Number.isInteger(message.fd) || message.fd < 3 || message.fd > 2147483647) {
+        await finish('invalid-file-lock-request');
+        return;
+      }
+      pendingLocks.add(message.id);
+      send({ type: 'flock', id: message.id, fd: message.fd });
+    } else if (message.type === 'ready') {
       try {
         const origin = new URL(message.origin), launch = new URL(message.launch);
         if (origin.protocol !== 'http:' || origin.hostname !== '127.0.0.1' || !origin.port || launch.origin !== origin.origin || launch.username || launch.password) throw new Error();
@@ -88,6 +106,7 @@ bridge.once('connect', () => {
         if (denied.status !== 401) throw new Error();
         if (closing || report.status === 'stopping') return;
         report.checks.push({ name: 'Unauthenticated access denied', ok: true, status: 401 });
+        if (nativeFlock) report.checks.push({ name: 'Native session lock and contention', ok: true });
         clearTimeout(timer);
         ready = true;
         report.status = 'ready';
@@ -99,7 +118,8 @@ bridge.once('connect', () => {
       report.checks.push({ name: 'Official context disposed', ok: true });
       await finish('user-stopped', true);
     } else if (message.type.endsWith('error')) {
-      await finish(message.type === 'startup-error' ? 'profile-startup-failed' : 'cleanup-failed');
+      const reasons = { 'startup-error': 'profile-startup-failed', 'flock-error': 'native-session-lock-check-failed' };
+      await finish(reasons[message.type] ?? 'cleanup-failed');
     }
   });
 });

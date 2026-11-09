@@ -1,5 +1,7 @@
 # iPhone 前台交互版 Harness
 
+0.3.3/build 6 通过 App 的本机桥接调用 iOS 文件锁，供 Harness 写入对话记录时使用。启动时在临时文件上检查独占锁、竞争拒绝和关闭后重新加锁，检查通过才启动助手。对话和密钥仍保存在原 App 数据目录。
+
 0.3.2/build 5 补齐 iOS 16 模型设置页启动所需的 `Promise.withResolvers`。使用随包发布的模型设置控制器，在模拟缺少该接口的环境中复现加载失败。注入兼容脚本后，控制器能加载可编辑的 DeepSeek 配置。真机模型页和云端模型调用待测。
 
 0.3.1/build 4：针对用户在 iOS 16.6.1 工作区选择器遇到的 AbortSignal.any 缺失错误，增加仅在原生接口缺失时启用的兼容脚本。通过 WKUserScript 在页面脚本执行前注入，保持官方前端和后端认证不变。缺失 API、取消传播、取消原因、输入校验及嵌套组合等六组本地检查通过；真机工作区流程仍需复测。Safari 17.4 才加入此接口，见 [WebKit 发布说明](https://webkit.org/blog/15063/webkit-features-in-safari-17-4/)。
