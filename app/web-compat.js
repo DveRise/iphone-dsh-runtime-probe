@@ -1,5 +1,31 @@
 // Installed before page scripts, only when the WebKit implementation is absent.
 (() => {
+  if (typeof Promise.withResolvers === 'function') return;
+
+  function withResolvers() {
+    let resolve;
+    let reject;
+    const promise = new this((resolvePromise, rejectPromise) => {
+      if (resolve !== undefined || reject !== undefined) {
+        throw new TypeError('Promise executor has already run');
+      }
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    if (typeof resolve !== 'function' || typeof reject !== 'function') {
+      throw new TypeError('Promise constructor did not supply resolvers');
+    }
+    return { promise, resolve, reject };
+  }
+
+  Object.defineProperty(Promise, 'withResolvers', {
+    value: withResolvers,
+    configurable: true,
+    writable: true,
+  });
+})();
+
+(() => {
   const Signal = globalThis.AbortSignal;
   if (!Signal || typeof Signal.any === 'function') return;
   const aborted = Object.getOwnPropertyDescriptor(Signal.prototype, 'aborted').get;

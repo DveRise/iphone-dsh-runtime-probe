@@ -7,7 +7,9 @@
     "First cancellation wins, preserves falsy reason, handles duplicate signals",
     "Already-aborted ordering and native signal brand/input validation",
     "Nested combined signals propagate cancellation",
-    "Directory-picker-shaped asynchronous request cancellation"
+    "Directory-picker-shaped asynchronous request cancellation",
+    "Shipped Models settings fails without Promise.withResolvers and loads a writable provider with the shim",
+    "Preserve native Promise.withResolvers and support resolution, rejection, and Promise subclasses"
   ],
   "actualIOSWebViewTested": false
 }

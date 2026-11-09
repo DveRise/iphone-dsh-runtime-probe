@@ -79,7 +79,7 @@ def build(archive=None, harness_payload=None):
             'NSLocalNetworkUsageDescription': '验证本机运行环境的网络接口。',
         }
         if harness_payload is not None:
-            info.update(CFBundleDisplayName='DeepSeek助手', CFBundleShortVersionString='0.3.1', CFBundleVersion='4',
+            info.update(CFBundleDisplayName='DeepSeek助手', CFBundleShortVersionString='0.3.2', CFBundleVersion='5',
                         NSAppTransportSecurity={'NSAllowsLocalNetworking': True})
         with (app / 'Info.plist').open('wb') as target:
             plistlib.dump(info, target)
@@ -102,7 +102,7 @@ def build(archive=None, harness_payload=None):
                   'apple_developer_signed': False, 'device_tested': False,
                   'deepseek_harness_bundled': harness_payload is not None,
                   'interactive_webview_bundled': True,
-                  'webkit_compatibility': ['AbortSignal.any when absent'],
+                  'webkit_compatibility': ['AbortSignal.any when absent', 'Promise.withResolvers when absent'],
                   'background_execution_supported': False,
                   'native_handoff': 'nonce-authenticated-loopback-socket; no token files',
                   'excluded_desktop_native_assets': excluded_native_assets,
