@@ -18,7 +18,7 @@ jobs:
           xcrun --sdk iphoneos clang -dynamiclib -arch arm64 -arch arm64e \
             -miphoneos-version-min=15.0 -fobjc-arc -fvisibility=hidden -O2 \
             -framework UIKit -framework Foundation -framework CoreGraphics \
-            -framework IOSurface -framework Vision \
+            -framework Vision \
             control-probe/ReadScreenProbe.m -o dist/iPhoneHarnessReadScreen.dylib
           codesign --force --sign - --timestamp=none dist/iPhoneHarnessReadScreen.dylib
           python3 control-probe/package.py dist/iPhoneHarnessReadScreen.dylib dist

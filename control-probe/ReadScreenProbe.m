@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Screen capture approach derived from ZXTouch Rootless v1.0.1 (GPL-3.0).
 #import <UIKit/UIKit.h>
-#import <IOSurface/IOSurface.h>
 #import <Vision/Vision.h>
 #include <arpa/inet.h>
 #include <dlfcn.h>
@@ -22,52 +21,69 @@
 - (NSString *)bundleIdentifier;
 @end
 
-typedef void (*RenderDisplay)(int, CFStringRef, IOSurfaceRef, int, int);
-typedef CGImageRef (*ImageFromSurface)(IOSurfaceRef);
+typedef struct __IOSurface *ProbeSurface;
+typedef void (*RenderDisplay)(int, CFStringRef, ProbeSurface, int, int);
+typedef CGImageRef (*ImageFromSurface)(ProbeSurface);
+typedef ProbeSurface (*CreateSurface)(CFDictionaryRef);
+typedef int (*LockSurface)(ProbeSurface, uint32_t, uint32_t *);
 
-// Capture only the portrait Settings screen. Check before and after the capture
-// on SpringBoard's main queue so a switch cannot be interleaved with the request.
+static BOOL SettingsIsVisible(UIApplication *springBoard) {
+    if (![springBoard respondsToSelector:@selector(_accessibilityFrontMostApplication)]
+        || ![springBoard respondsToSelector:@selector(_frontMostAppOrientation)]
+        || [springBoard _frontMostAppOrientation] != UIInterfaceOrientationPortrait) return NO;
+    id front = [springBoard _accessibilityFrontMostApplication];
+    return [front respondsToSelector:@selector(bundleIdentifier)]
+        && [[front bundleIdentifier] isEqualToString:@"com.apple.Preferences"];
+}
+
+static CGImageRef CopyFrameOnMainQueue(void) {
+    UIApplication *springBoard = UIApplication.sharedApplication;
+    if (!SettingsIsVisible(springBoard)) return NULL;
+
+    RenderDisplay render = (RenderDisplay)dlsym(RTLD_DEFAULT, "CARenderServerRenderDisplay");
+    ImageFromSurface makeImage = (ImageFromSurface)dlsym(RTLD_DEFAULT, "UICreateCGImageFromIOSurface");
+    CreateSurface create = (CreateSurface)dlsym(RTLD_DEFAULT, "IOSurfaceCreate");
+    LockSurface lock = (LockSurface)dlsym(RTLD_DEFAULT, "IOSurfaceLock");
+    LockSurface unlock = (LockSurface)dlsym(RTLD_DEFAULT, "IOSurfaceUnlock");
+    if (!render || !makeImage || !create || !lock || !unlock) return NULL;
+
+    CGSize native = UIScreen.mainScreen.nativeBounds.size;
+    size_t width = (size_t)native.width, height = (size_t)native.height;
+    if (!width || height <= width || width > 2048 || height > 4096) return NULL;
+    size_t rowBytes = (width * 4 + 31) & ~(size_t)31;
+    NSDictionary *properties = @{
+        @"IOSurfaceWidth": @(width),
+        @"IOSurfaceHeight": @(height),
+        @"IOSurfaceBytesPerElement": @4,
+        @"IOSurfaceBytesPerRow": @(rowBytes),
+        @"IOSurfaceAllocSize": @(rowBytes * height),
+        @"IOSurfacePixelFormat": @((uint32_t)0x42475241),
+        @"IOSurfaceIsGlobal": @YES,
+    };
+    ProbeSurface surface = create((__bridge CFDictionaryRef)properties);
+    if (!surface) return NULL;
+    CGImageRef frame = NULL;
+    @try {
+        if (lock(surface, 0, NULL) == 0) {
+            @try {
+                render(0, CFSTR("LCD"), surface, 0, 0);
+                if (SettingsIsVisible(springBoard)) frame = makeImage(surface);
+            } @finally {
+                unlock(surface, 0, NULL);
+            }
+        }
+    } @finally {
+        CFRelease((CFTypeRef)surface);
+    }
+    return frame;
+}
+
+// Keep the two foreground checks and the capture on SpringBoard's main queue.
 static CGImageRef CopySettingsFrame(void) {
     __block CGImageRef frame = NULL;
     dispatch_sync(dispatch_get_main_queue(), ^{
-        UIApplication *springBoard = UIApplication.sharedApplication;
-        if (![springBoard respondsToSelector:@selector(_accessibilityFrontMostApplication)]
-            || ![springBoard respondsToSelector:@selector(_frontMostAppOrientation)]
-            || [springBoard _frontMostAppOrientation] != UIInterfaceOrientationPortrait) return;
-        id front = [springBoard _accessibilityFrontMostApplication];
-        if (![front respondsToSelector:@selector(bundleIdentifier)]
-            || ![[front bundleIdentifier] isEqualToString:@"com.apple.Preferences"]) return;
-
-        RenderDisplay render = (RenderDisplay)dlsym(RTLD_DEFAULT, "CARenderServerRenderDisplay");
-        ImageFromSurface makeImage = (ImageFromSurface)dlsym(RTLD_DEFAULT, "UICreateCGImageFromIOSurface");
-        if (!render || !makeImage) return;
-
-        CGSize native = UIScreen.mainScreen.nativeBounds.size;
-        size_t width = (size_t)native.width, height = (size_t)native.height;
-        if (!width || height <= width || width > 2048 || height > 4096) return;
-        size_t rowBytes = (width * 4 + 31) & ~(size_t)31;
-        NSDictionary *properties = @{
-            (__bridge NSString *)kIOSurfaceWidth: @(width),
-            (__bridge NSString *)kIOSurfaceHeight: @(height),
-            (__bridge NSString *)kIOSurfaceBytesPerElement: @4,
-            (__bridge NSString *)kIOSurfaceBytesPerRow: @(rowBytes),
-            (__bridge NSString *)kIOSurfaceAllocSize: @(rowBytes * height),
-            (__bridge NSString *)kIOSurfacePixelFormat: @((uint32_t)0x42475241),
-            @"IOSurfaceIsGlobal": @YES,
-        };
-        IOSurfaceRef surface = IOSurfaceCreate((__bridge CFDictionaryRef)properties);
-        if (!surface) return;
-        if (IOSurfaceLock(surface, 0, NULL) == 0) {
-            render(0, CFSTR("LCD"), surface, 0, 0);
-            id stillFront = [springBoard _accessibilityFrontMostApplication];
-            if ([stillFront respondsToSelector:@selector(bundleIdentifier)]
-                && [[stillFront bundleIdentifier] isEqualToString:@"com.apple.Preferences"]
-                && [springBoard _frontMostAppOrientation] == UIInterfaceOrientationPortrait) {
-                frame = makeImage(surface);
-            }
-            IOSurfaceUnlock(surface, 0, NULL);
-        }
-        CFRelease(surface);
+        @try { frame = CopyFrameOnMainQueue(); }
+        @catch (NSException *exception) { (void)exception; }
     });
     return frame;
 }
