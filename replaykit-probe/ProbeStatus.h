@@ -4,6 +4,8 @@
 
 #define ReplayProbePort 46031
 #define ReplayProbeQuery 'R'
+#define ReplayProbeTestCodeQuery 'C'
+#define ReplayProbeNoTestCode UINT16_MAX
 
 typedef enum : uint8_t {
     ReplayProbeIdle,
@@ -13,4 +15,5 @@ typedef enum : uint8_t {
     ReplayProbeNoMatch,
     ReplayProbeMatchedChinese,
     ReplayProbeMatchedEnglish,
+    ReplayProbeMatchedTestCode,
 } ReplayProbeStatus;

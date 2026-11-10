@@ -11,9 +11,24 @@
 @interface SampleHandler : RPBroadcastSampleHandler
 @end
 
+static uint16_t TestPageCode(NSSet<NSString *> *lines) {
+    if (![lines containsObject:@"读屏测试页"]) return ReplayProbeNoTestCode;
+    NSRegularExpression *pattern = [NSRegularExpression regularExpressionWithPattern:@"^编号\\s*[:：]?\\s*([0-9]{4})$" options:0 error:NULL];
+    uint16_t code = ReplayProbeNoTestCode;
+    for (NSString *line in lines) {
+        NSTextCheckingResult *match = [pattern firstMatchInString:line options:0 range:NSMakeRange(0, line.length)];
+        if (!match) continue;
+        uint16_t candidate = (uint16_t)[line substringWithRange:[match rangeAtIndex:1]].intValue;
+        if (code != ReplayProbeNoTestCode && code != candidate) return ReplayProbeNoTestCode;
+        code = candidate;
+    }
+    return code;
+}
+
 @implementation SampleHandler {
     dispatch_source_t _listener;
     _Atomic(uint8_t) _status;
+    _Atomic(uint16_t) _testCode;
     NSTimeInterval _startedAt;
     NSTimeInterval _nextFrameAt;
 }
@@ -35,6 +50,7 @@
     _startedAt = NSProcessInfo.processInfo.systemUptime;
     _nextFrameAt = _startedAt + 3;
     atomic_store(&_status, ReplayProbeWaiting);
+    atomic_store(&_testCode, ReplayProbeNoTestCode);
     _listener = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, socketFD, 0,
                                        dispatch_queue_create("local.replayprobe.status", DISPATCH_QUEUE_SERIAL));
     __weak SampleHandler *weakSelf = self;
@@ -45,9 +61,20 @@
         socklen_t length = sizeof(peer);
         char query[2];
         ssize_t received = recvfrom(socketFD, query, sizeof(query), 0, (struct sockaddr *)&peer, &length);
-        if (received == 1 && query[0] == ReplayProbeQuery && peer.sin_addr.s_addr == htonl(INADDR_LOOPBACK)) {
-            uint8_t status = atomic_load(&handler->_status);
-            sendto(socketFD, &status, sizeof(status), 0, (struct sockaddr *)&peer, length);
+        if (received != 1 || peer.sin_addr.s_addr != htonl(INADDR_LOOPBACK)) return;
+        uint8_t status = atomic_load(&handler->_status);
+        if (query[0] == ReplayProbeQuery) {
+            if (status == ReplayProbeMatchedTestCode) status = ReplayProbeNoMatch;
+            sendto(socketFD, &status, 1, 0, (struct sockaddr *)&peer, length);
+        } else if (query[0] == ReplayProbeTestCodeQuery) {
+            uint16_t code = atomic_load(&handler->_testCode);
+            if (code != ReplayProbeNoTestCode) {
+                uint8_t reply[] = {ReplayProbeMatchedTestCode, (uint8_t)(code >> 8), (uint8_t)code};
+                sendto(socketFD, reply, sizeof(reply), 0, (struct sockaddr *)&peer, length);
+            } else {
+                if (status >= ReplayProbeMatchedChinese) status = ReplayProbeNoMatch;
+                sendto(socketFD, &status, 1, 0, (struct sockaddr *)&peer, length);
+            }
         }
     });
     dispatch_source_set_cancel_handler(_listener, ^{ close(socketFD); });
@@ -94,8 +121,15 @@
             if (line.length) [lines addObject:line];
         }
         ReplayProbeStatus status = ReplayProbeNoMatch;
-        if ([lines containsObject:@"通用"] && [lines containsObject:@"关于本机"]) status = ReplayProbeMatchedChinese;
-        if ([lines containsObject:@"general"] && [lines containsObject:@"about"]) status = ReplayProbeMatchedEnglish;
+        uint16_t code = TestPageCode(lines);
+        if (code != ReplayProbeNoTestCode) {
+            atomic_store(&_testCode, code);
+            status = ReplayProbeMatchedTestCode;
+        } else if ([lines containsObject:@"通用"] && [lines containsObject:@"关于本机"]) {
+            status = ReplayProbeMatchedChinese;
+        } else if ([lines containsObject:@"general"] && [lines containsObject:@"about"]) {
+            status = ReplayProbeMatchedEnglish;
+        }
         atomic_store(&_status, status);
     }
 }

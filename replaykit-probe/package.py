@@ -17,8 +17,8 @@ def main(output):
     extension = app / f'PlugIns/{EXTENSION_NAME}.appex'
     shared = {
         'CFBundleInfoDictionaryVersion': '6.0',
-        'CFBundleShortVersionString': '0.1.1',
-        'CFBundleVersion': '2',
+        'CFBundleShortVersionString': '0.1.2',
+        'CFBundleVersion': '3',
         'CFBundleSupportedPlatforms': ['iPhoneOS'],
         'MinimumOSVersion': '16.0',
         'UIDeviceFamily': [1],

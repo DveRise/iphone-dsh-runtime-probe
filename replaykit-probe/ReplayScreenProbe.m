@@ -4,7 +4,7 @@
 #import <unistd.h>
 #import "ProbeStatus.h"
 
-static ReplayProbeStatus QueryProbe(void) {
+static ReplayProbeStatus QueryProbe(char query) {
     int socketFD = socket(AF_INET, SOCK_DGRAM, 0);
     if (socketFD < 0) return ReplayProbeIdle;
     struct timeval timeout = {.tv_usec = 200000};
@@ -12,8 +12,7 @@ static ReplayProbeStatus QueryProbe(void) {
         .sin_len = sizeof(endpoint), .sin_family = AF_INET,
         .sin_port = htons(ReplayProbePort), .sin_addr.s_addr = htonl(INADDR_LOOPBACK),
     };
-    char query = ReplayProbeQuery;
-    uint8_t reply[2];
+    uint8_t reply[4];
     ssize_t received = -1;
     if (setsockopt(socketFD, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0 &&
         connect(socketFD, (struct sockaddr *)&endpoint, sizeof(endpoint)) == 0 &&
@@ -21,6 +20,10 @@ static ReplayProbeStatus QueryProbe(void) {
         received = recv(socketFD, reply, sizeof(reply), 0);
     }
     close(socketFD);
+    if (query == ReplayProbeTestCodeQuery && received == 3 &&
+        reply[0] == ReplayProbeMatchedTestCode && ((reply[1] << 8) | reply[2]) <= 9999) {
+        return ReplayProbeMatchedTestCode;
+    }
     return received == 1 && reply[0] <= ReplayProbeMatchedEnglish ? (ReplayProbeStatus)reply[0] : ReplayProbeIdle;
 }
 
@@ -47,7 +50,7 @@ static ReplayProbeStatus QueryProbe(void) {
     [super viewDidLoad];
     self.view.backgroundColor = UIColor.systemBackgroundColor;
     UILabel *title = [self label:@"录屏读屏测试" style:UIFontTextStyleLargeTitle];
-    UILabel *instructions = [self label:@"① 点下方的录屏按钮，在系统菜单里开始。\n② 在 35 秒内切到「设置 → 通用」，停留约 5 秒。\n③ 回到这里看结果，再点屏幕顶部的红色标记停止录屏。" style:UIFontTextStyleBody];
+    UILabel *instructions = [self label:@"① 点下方的录屏按钮，在系统菜单里开始。\n② 35 秒内打开准备好的测试备忘录或「设置 → 通用」，停留约 5 秒。\n③ 保持录屏，打开 DeepSeek助手读取结果。看完后点顶部红色标记停止。" style:UIFontTextStyleBody];
     RPSystemBroadcastPickerView *picker = [[RPSystemBroadcastPickerView alloc] initWithFrame:CGRectMake(0, 0, 56, 56)];
     picker.showsMicrophoneButton = NO;
     NSURL *pluginURL = [NSBundle.mainBundle.builtInPlugInsURL URLByAppendingPathComponent:@"ScreenReader.appex"];
@@ -114,7 +117,8 @@ static ReplayProbeStatus QueryProbe(void) {
     if (_queryInFlight || UIApplication.sharedApplication.applicationState != UIApplicationStateActive) return;
     _queryInFlight = YES;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        ReplayProbeStatus status = QueryProbe();
+        ReplayProbeStatus status = QueryProbe(ReplayProbeTestCodeQuery);
+        if (status != ReplayProbeMatchedTestCode) status = QueryProbe(ReplayProbeQuery);
         dispatch_async(dispatch_get_main_queue(), ^{
             self->_queryInFlight = NO;
             [self showStatus:status];
@@ -132,6 +136,7 @@ static ReplayProbeStatus QueryProbe(void) {
         case ReplayProbeNoMatch: _statusLabel.text = @"已读取画面，暂未识别到测试菜单"; break;
         case ReplayProbeMatchedChinese: _statusLabel.text = @"读屏成功 · 已识别「通用」和「关于本机」"; break;
         case ReplayProbeMatchedEnglish: _statusLabel.text = @"读屏成功 · 已识别 General 和 About"; break;
+        case ReplayProbeMatchedTestCode: _statusLabel.text = @"读屏成功 · 已识别测试编号"; break;
     }
     if (status == ReplayProbeIdle && _lastResult != ReplayProbeIdle) {
         _statusLabel.text = [_statusLabel.text stringByAppendingString:@"\n当前录屏扩展无响应，上方为最近一次结果。"];
