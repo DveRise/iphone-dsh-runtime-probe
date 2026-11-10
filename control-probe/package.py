@@ -8,6 +8,7 @@ import plistlib
 import subprocess
 import sys
 import tarfile
+import zipfile
 
 NAME = 'iPhoneHarnessReadScreen'
 PACKAGE = 'local.iphoneharness.readscreen'
@@ -55,12 +56,45 @@ Description: Local, read-only portrait Settings screenshot and OCR probe.
     package = output / f'{PACKAGE}_{VERSION}_iphoneos-arm64.deb'
     with package.open('xb') as stream:
         stream.write(archive)
+    client = pack_client(output)
     (output / 'report.json').write_text(json.dumps({
         'package': package.name, 'sha256': hashlib.sha256(archive).hexdigest(),
         'dylib_sha256': hashlib.sha256(dylib).hexdigest(), 'architectures': archs,
         'payload': files, 'maintainer_scripts': [], 'device_tested': False,
         'listener': '127.0.0.1:46030',
+        'client_ipa': client.name,
+        'client_sha256': hashlib.sha256(client.read_bytes()).hexdigest(),
     }, indent=2) + '\n', encoding='utf-8')
+
+
+def pack_client(output):
+    app = output / 'Payload/ReadScreenClient.app'
+    info = {
+        'CFBundleIdentifier': 'local.iphoneharness.readscreenclient',
+        'CFBundleDisplayName': '读屏测试',
+        'CFBundleExecutable': 'ReadScreenClient',
+        'CFBundleName': 'ReadScreenClient',
+        'CFBundleInfoDictionaryVersion': '6.0',
+        'CFBundlePackageType': 'APPL',
+        'CFBundleShortVersionString': VERSION,
+        'CFBundleVersion': '1',
+        'CFBundleSupportedPlatforms': ['iPhoneOS'],
+        'MinimumOSVersion': '16.0',
+        'UIDeviceFamily': [1],
+        'UIRequiredDeviceCapabilities': ['arm64'],
+        'UILaunchScreen': {},
+        'UISupportedInterfaceOrientations': ['UIInterfaceOrientationPortrait'],
+    }
+    with (app / 'Info.plist').open('wb') as stream:
+        plistlib.dump(info, stream)
+    subprocess.run(['codesign', '--force', '--sign', '-', '--timestamp=none', str(app)], check=True)
+    subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
+    ipa = output / 'ReadScreenClient.ipa'
+    with zipfile.ZipFile(ipa, 'x', compression=zipfile.ZIP_DEFLATED) as archive:
+        for entry in sorted(app.rglob('*')):
+            if entry.is_file():
+                archive.write(entry, entry.relative_to(output))
+    return ipa
 
 
 if __name__ == '__main__':
