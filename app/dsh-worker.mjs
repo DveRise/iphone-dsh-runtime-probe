@@ -5,6 +5,7 @@ import { mkdtemp, open, unlink, rmdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { registerScreenTool } from './screen-tool.mjs';
+import { registerCalculatorTool } from './calculator-tool.mjs';
 
 const requirePackage = createRequire(join(workerData.installRoot, 'package.json'));
 const load = name => import(pathToFileURL(requirePackage.resolve(name)).href);
@@ -77,6 +78,8 @@ async function start() {
     if (!server || !connection) throw new Error('Official Web services were not mounted');
     const tools = runtime.ctx.get('tools');
     if (tools) registerScreenTool(tools, defineTool);
+    const unregisterCalculator = tools && workerData.nativeFlock
+      ? registerCalculatorTool(tools, defineTool, parentPort) : undefined;
     const origin = server.getOrigin();
     if (new URL(origin).hostname !== '127.0.0.1') throw new Error('Non-loopback listener refused');
     // This private URL travels only in memory, never in the exported report.
@@ -85,6 +88,7 @@ async function start() {
       if (message.type !== 'stop') return;
       parentPort.off('message', stop);
       try {
+        unregisterCalculator?.();
         await runtime.ctx.fiber.dispose();
         parentPort.postMessage({ type: 'disposed' });
       } catch (error) {

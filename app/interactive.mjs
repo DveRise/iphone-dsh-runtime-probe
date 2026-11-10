@@ -25,6 +25,8 @@ const report = { schema: 1, type: 'interactive-harness', dshVersion: manifest.ve
 const send = message => { if (!bridge.destroyed) bridge.write(JSON.stringify({ ...message, nonce }) + '\n'); };
 const save = () => writeFile(join(state, 'runtime-report.json'), JSON.stringify(report, null, 2), { mode: 0o600 });
 const pendingLocks = new Set();
+const calculatorStatuses = new Set(['awaiting_confirmation', 'busy', 'unavailable']);
+let lastCalculatorRequest = 0;
 let worker, closing = false, ready = false, buffer = '', timer;
 let resolveDone;
 const done = new Promise(resolve => { resolveDone = resolve; });
@@ -69,6 +71,9 @@ bridge.on('data', chunk => {
       } else if (message.type === 'flock-result' && Number.isInteger(message.errno)
           && message.errno >= 0 && message.errno <= 4095 && pendingLocks.delete(message.id)) {
         worker.postMessage({ type: 'flock-result', id: message.id, errno: message.errno });
+      } else if (message.type === 'calculator-result' && Number.isSafeInteger(message.id)
+          && message.id > 0 && message.id <= lastCalculatorRequest && calculatorStatuses.has(message.status)) {
+        worker.postMessage({ type: 'calculator-result', id: message.id, status: message.status });
       } else {
         throw new Error();
       }
@@ -97,6 +102,13 @@ bridge.once('connect', () => {
       }
       pendingLocks.add(message.id);
       send({ type: 'flock', id: message.id, fd: message.fd });
+    } else if (message.type === 'calculator-request' && nativeFlock
+        && Number.isSafeInteger(message.id) && message.id > lastCalculatorRequest) {
+      lastCalculatorRequest = message.id;
+      if (report.status === 'ready') send({ type: 'calculator-request', id: message.id });
+      else worker.postMessage({ type: 'calculator-result', id: message.id, status: 'unavailable' });
+    } else if (message.type === 'calculator-cancel' && nativeFlock && message.id === lastCalculatorRequest) {
+      send({ type: 'calculator-cancel', id: message.id });
     } else if (message.type === 'ready') {
       try {
         const origin = new URL(message.origin), launch = new URL(message.launch);

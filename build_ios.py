@@ -56,6 +56,7 @@ def build(archive=None, harness_payload=None):
             shutil.copytree(harness_payload, app / 'dsh-runtime', ignore=omit_desktop_assets)
             shutil.copyfile(ROOT / 'app' / 'dsh-worker.mjs', app / 'dsh-worker.mjs')
             shutil.copyfile(ROOT / 'app' / 'screen-tool.mjs', app / 'screen-tool.mjs')
+            shutil.copyfile(ROOT / 'app' / 'calculator-tool.mjs', app / 'calculator-tool.mjs')
         # Preserve the upstream notices in the generated application.
         license_url = 'https://raw.githubusercontent.com/fogtape/nodejs-mobile/v24.22.1-0/LICENSE'
         with urllib.request.urlopen(license_url, timeout=30) as response:
@@ -80,7 +81,7 @@ def build(archive=None, harness_payload=None):
             'NSLocalNetworkUsageDescription': '验证本机运行环境的网络接口。',
         }
         if harness_payload is not None:
-            info.update(CFBundleDisplayName='DeepSeek助手', CFBundleShortVersionString='0.3.6', CFBundleVersion='9',
+            info.update(CFBundleDisplayName='DeepSeek助手', CFBundleShortVersionString='0.3.7', CFBundleVersion='10',
                         NSAppTransportSecurity={'NSAllowsLocalNetworking': True})
         with (app / 'Info.plist').open('wb') as target:
             plistlib.dump(info, target)
@@ -107,6 +108,7 @@ def build(archive=None, harness_payload=None):
                   'ios_session_lock': 'flock(LOCK_EX | LOCK_NB) via authenticated in-process host bridge',
                   'mobile_settings': 'single-column settings and write-only key editor with draft reveal and clear',
                   'screen_tool': 'iphone_read_settings and iphone_read_test_code via iOS loopback UDP',
+                  'calculator_tool': 'iphone_request_calculator, fixed shortcut with native confirmation',
                   'background_execution_supported': False,
                   'native_handoff': 'nonce-authenticated-loopback-socket; no token files',
                   'excluded_desktop_native_assets': excluded_native_assets,

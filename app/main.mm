@@ -37,6 +37,8 @@ static BOOL sendLine(int socket, NSDictionary *message) {
 @property(nonatomic,copy) NSString *directory;
 @property(nonatomic,copy) NSString *nonce;
 @property(nonatomic,copy) NSString *origin;
+@property(nonatomic,strong) UIAlertController *calculatorAlert;
+@property(nonatomic,strong) NSNumber *calculatorRequestID;
 @property(atomic) BOOL stopping;
 @property(atomic) int listener;
 @property(atomic) int client;
@@ -56,7 +58,9 @@ static BOOL sendLine(int socket, NSDictionary *message) {
     title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle2];
     self.status = [UILabel new]; self.status.numberOfLines = 0;
     self.status.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
-    self.status.text = error ? @"无法创建工作目录。" : @"前台运行 · 手机操作工具尚未接入";
+    self.status.text = error ? @"无法创建工作目录。" : @"前台运行 · 手机操作需要你确认";
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(dismissCalculatorOnBackground:)
+        name:UIApplicationDidEnterBackgroundNotification object:nil];
     self.startButton = [UIButton buttonWithType:UIButtonTypeSystem];
     [self.startButton setTitle:@"启动助手" forState:UIControlStateNormal];
     [self.startButton addTarget:self action:@selector(startHarness) forControlEvents:UIControlEventTouchUpInside];
@@ -105,6 +109,59 @@ static BOOL sendLine(int socket, NSDictionary *message) {
 - (NSString *)originForURL:(NSURL *)url {
     return [NSString stringWithFormat:@"http://127.0.0.1:%@",url.port];
 }
+- (void)cancelCalculatorConfirmation {
+    UIAlertController *alert = self.calculatorAlert;
+    self.calculatorAlert = nil;
+    self.calculatorRequestID = nil;
+    [alert dismissViewControllerAnimated:YES completion:nil];
+}
+- (void)dismissCalculatorOnBackground:(NSNotification *)notification {
+    (void)notification;
+    [self cancelCalculatorConfirmation];
+}
+- (NSString *)requestCalculatorConfirmation:(NSNumber *)requestID {
+    UIApplication *application = UIApplication.sharedApplication;
+    if (!self.origin || self.stopping || self.client < 0 || !self.view.window ||
+        application.applicationState != UIApplicationStateActive) return @"unavailable";
+    if (self.presentedViewController) return @"busy";
+
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"打开计算器？"
+        message:@"确认后运行你创建的「助手测试计算器」快捷指令。"
+        preferredStyle:UIAlertControllerStyleAlert];
+    self.calculatorAlert = alert;
+    self.calculatorRequestID = requestID;
+    NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + 30;
+    __weak HarnessController *weakSelf = self;
+    __weak UIAlertController *weakAlert = alert;
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *action) {
+        HarnessController *controller = weakSelf;
+        if (controller.calculatorAlert != weakAlert) return;
+        controller.calculatorAlert = nil;
+        controller.calculatorRequestID = nil;
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"打开计算器" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+        HarnessController *controller = weakSelf;
+        if (!weakAlert || controller.calculatorAlert != weakAlert) return;
+        controller.calculatorAlert = nil;
+        controller.calculatorRequestID = nil;
+        if (!controller.origin || controller.stopping || controller.client < 0 ||
+            application.applicationState != UIApplicationStateActive ||
+            NSProcessInfo.processInfo.systemUptime > deadline) return;
+        NSURLComponents *url = [NSURLComponents new];
+        url.scheme = @"shortcuts";
+        url.host = @"run-shortcut";
+        url.queryItems = @[[NSURLQueryItem queryItemWithName:@"name" value:@"助手测试计算器"]];
+        [application openURL:url.URL options:@{} completionHandler:^(BOOL accepted) {
+            if (!accepted) controller.status.text = @"系统未能打开快捷指令。";
+        }];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        HarnessController *controller = weakSelf;
+        if (weakAlert && controller.calculatorAlert == weakAlert) [controller cancelCalculatorConfirmation];
+    });
+    return @"awaiting_confirmation";
+}
 - (void)handleMessage:(NSDictionary *)message {
     NSString *type = message[@"type"];
     if ([type isEqual:@"ready"] && !self.stopping) {
@@ -115,10 +172,21 @@ static BOOL sendLine(int socket, NSDictionary *message) {
         self.status.text = @"运行中 · 请保持 App 在前台";
         [self.web loadRequest:[NSURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:30]];
     } else if ([type isEqual:@"error"]) {
+        [self cancelCalculatorConfirmation];
         self.status.text = @"启动或运行失败，请导出状态。"; self.stopButton.enabled = NO;
         self.origin = nil; [self.web stopLoading]; self.web.hidden = YES;
     } else if ([type isEqual:@"stopped"]) {
+        [self cancelCalculatorConfirmation];
         self.status.text = @"已停止。再次启动请从多任务界面关闭后重开 App。"; self.stopButton.enabled = NO;
+    } else if ([type isEqual:@"calculator-request"] && [message[@"id"] isKindOfClass:NSNumber.class]) {
+        NSNumber *requestID = message[@"id"];
+        NSString *result = [self requestCalculatorConfirmation:requestID];
+        @synchronized(self) {
+            if (self.client >= 0) sendLine(self.client, @{@"type":@"calculator-result", @"id":requestID,
+                @"status":result, @"nonce":self.nonce});
+        }
+    } else if ([type isEqual:@"calculator-cancel"] && [message[@"id"] isEqual:self.calculatorRequestID]) {
+        [self cancelCalculatorConfirmation];
     }
 }
 
@@ -219,6 +287,7 @@ static BOOL sendLine(int socket, NSDictionary *message) {
             if (oldErr >= 0) { dup2(oldErr,STDERR_FILENO); close(oldErr); }
             self.stopping = YES;
             dispatch_async(dispatch_get_main_queue(), ^{
+                [self cancelCalculatorConfirmation];
                 self.stopButton.enabled = NO;
                 self.origin = nil; [self.web stopLoading]; self.web.hidden = YES;
                 self.status.text = result == 0 ? @"已停止。再次启动请从多任务界面关闭后重开 App。" : @"助手已退出，请导出状态。";
@@ -229,6 +298,7 @@ static BOOL sendLine(int socket, NSDictionary *message) {
 }
 
 - (void)stopHarness {
+    [self cancelCalculatorConfirmation];
     self.stopButton.enabled = NO; self.status.text = @"正在停止……";
     self.origin = nil; [self.web stopLoading]; self.web.hidden = YES;
     @synchronized(self) {
