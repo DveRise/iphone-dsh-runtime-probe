@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { mkdtemp, open, unlink, rmdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { registerScreenTool } from './screen-tool.mjs';
 
 const requirePackage = createRequire(join(workerData.installRoot, 'package.json'));
 const load = name => import(pathToFileURL(requirePackage.resolve(name)).href);
@@ -66,6 +67,7 @@ async function start() {
   try {
     const { runProfile } = await load('@deepseek-ai/dsh/profile-boot');
     const { loadLayeredEnv } = await load('@deepseek-ai/dsh-app-boot');
+    const { defineTool } = await load('@deepseek-ai/dsh-tools');
     const runtime = await runProfile({
       environment: loadLayeredEnv('dsh'), profile: 'web', patchFiles: [],
       args: ['--host', '127.0.0.1', '--port', '0', '--no-open'],
@@ -73,6 +75,8 @@ async function start() {
     const server = runtime.ctx.get('webServer');
     const connection = runtime.ctx.get('connection');
     if (!server || !connection) throw new Error('Official Web services were not mounted');
+    const tools = runtime.ctx.get('tools');
+    if (tools) registerScreenTool(tools, defineTool);
     const origin = server.getOrigin();
     if (new URL(origin).hostname !== '127.0.0.1') throw new Error('Non-loopback listener refused');
     // This private URL travels only in memory, never in the exported report.
