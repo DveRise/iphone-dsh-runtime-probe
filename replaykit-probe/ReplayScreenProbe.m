@@ -47,17 +47,36 @@ static ReplayProbeStatus QueryProbe(void) {
     [super viewDidLoad];
     self.view.backgroundColor = UIColor.systemBackgroundColor;
     UILabel *title = [self label:@"录屏读屏测试" style:UIFontTextStyleLargeTitle];
-    UILabel *instructions = [self label:@"① 点下方录屏图标，再点「开始直播」。\n② 在 35 秒内切到系统「设置 → 通用」，停留约 5 秒。\n③ 回到这里看结果。测试后点屏幕顶部的红色录屏标记，停止录屏。" style:UIFontTextStyleBody];
-    RPSystemBroadcastPickerView *picker = [[RPSystemBroadcastPickerView alloc] initWithFrame:CGRectZero];
+    UILabel *instructions = [self label:@"① 点下方的录屏按钮，在系统菜单里开始。\n② 在 35 秒内切到「设置 → 通用」，停留约 5 秒。\n③ 回到这里看结果，再点屏幕顶部的红色标记停止录屏。" style:UIFontTextStyleBody];
+    RPSystemBroadcastPickerView *picker = [[RPSystemBroadcastPickerView alloc] initWithFrame:CGRectMake(0, 0, 56, 56)];
     picker.showsMicrophoneButton = NO;
     NSURL *pluginURL = [NSBundle.mainBundle.builtInPlugInsURL URLByAppendingPathComponent:@"ScreenReader.appex"];
     NSString *extensionID = pluginURL ? [NSBundle bundleWithURL:pluginURL].bundleIdentifier : nil;
     picker.preferredExtension = extensionID;
     picker.accessibilityLabel = @"打开系统录屏选择器";
-    [picker.heightAnchor constraintEqualToConstant:56].active = YES;
+    picker.tintColor = UIColor.labelColor;
+    picker.backgroundColor = UIColor.secondarySystemBackgroundColor;
+    picker.translatesAutoresizingMaskIntoConstraints = NO;
+    UILabel *pickerLabel = [self label:@"点左侧圆圈开始" style:UIFontTextStyleHeadline];
+    pickerLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    UIView *pickerRow = [[UIView alloc] init];
+    [pickerRow addSubview:picker];
+    [pickerRow addSubview:pickerLabel];
+    [NSLayoutConstraint activateConstraints:@[
+        [picker.widthAnchor constraintEqualToConstant:56],
+        [picker.heightAnchor constraintEqualToConstant:56],
+        [picker.leadingAnchor constraintEqualToAnchor:pickerRow.leadingAnchor],
+        [picker.topAnchor constraintEqualToAnchor:pickerRow.topAnchor],
+        [picker.bottomAnchor constraintEqualToAnchor:pickerRow.bottomAnchor],
+        [pickerLabel.leadingAnchor constraintEqualToAnchor:picker.trailingAnchor constant:14],
+        [pickerLabel.trailingAnchor constraintEqualToAnchor:pickerRow.trailingAnchor],
+        [pickerLabel.centerYAnchor constraintEqualToAnchor:picker.centerYAnchor],
+    ]];
+    UILabel *fallback = [self label:@"也可以在控制中心长按「屏幕录制」，选择「录屏读屏测试」。" style:UIFontTextStyleFootnote];
+    fallback.textColor = UIColor.secondaryLabelColor;
     _statusLabel = [self label:extensionID ? @"等待开始录屏" : @"测试包缺少录屏扩展" style:UIFontTextStyleHeadline];
-    picker.hidden = extensionID.length == 0;
-    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[title, instructions, picker, _statusLabel]];
+    pickerRow.hidden = extensionID.length == 0;
+    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[title, instructions, pickerRow, _statusLabel, fallback]];
     stack.axis = UILayoutConstraintAxisVertical;
     stack.alignment = UIStackViewAlignmentFill;
     stack.spacing = 22;
@@ -106,7 +125,7 @@ static ReplayProbeStatus QueryProbe(void) {
 - (void)showStatus:(ReplayProbeStatus)status {
     if (status != ReplayProbeIdle) _lastResult = status;
     switch (_lastResult) {
-        case ReplayProbeIdle: _statusLabel.text = @"等待录屏扩展响应"; break;
+        case ReplayProbeIdle: _statusLabel.text = @"等待开始录屏"; break;
         case ReplayProbeWaiting: _statusLabel.text = @"录屏已启动，等待第一帧画面"; break;
         case ReplayProbeFrames: _statusLabel.text = @"已收到画面，等待识别"; break;
         case ReplayProbeVisionError: _statusLabel.text = @"已收到画面，文字识别出错"; break;
